@@ -247,7 +247,7 @@ def cleanup_loaded():
 
 # ---------------------------------------------------------------- HTTP
 class H(BaseHTTPRequestHandler):
-    server_version = "InfiniSearch/2.1"
+    server_version = "InfiniSearch/2.2"
 
     def log_message(self, fmt, *a):
         # keine Suchbegriffe/Pfade ins Log schreiben (Privatsphaere)
@@ -357,56 +357,92 @@ class H(BaseHTTPRequestHandler):
 
 
 PAGE = r"""<!doctype html><html lang="de"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>InfiniSearch</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0d"><meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes"><title>InfiniSearch</title>
 <style>
 :root{color-scheme:dark;--bg:#0b0b0d;--card:#16161a;--line:#2a2a31;--acc:#6d5dfc;--mut:#9a9aa5;--fav:#f5c542}
-*{box-sizing:border-box}body{margin:0;font:15px system-ui,sans-serif;background:var(--bg);color:#eee}
-header{position:sticky;top:0;background:var(--bg);padding:12px 14px;border-bottom:1px solid var(--line);z-index:3}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;font:15px system-ui,-apple-system,sans-serif;background:var(--bg);color:#eee;padding-bottom:env(safe-area-inset-bottom)}
+header{background:var(--bg);padding:10px 12px;border-bottom:1px solid var(--line)}
 .wrap{max-width:1100px;margin:auto}
 form{display:flex;gap:8px}
-input{flex:1;padding:11px 12px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:#eee;font-size:16px}
-button{padding:9px 13px;border:0;border-radius:8px;background:var(--acc);color:#fff;font-weight:600;cursor:pointer;white-space:nowrap}
-button.sec{background:#2a2a31}button.danger{background:#7a2330}button:disabled{opacity:.45;cursor:default}
-nav{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}nav button{background:transparent;border:1px solid var(--line)}
-nav button.on{background:#2a2a31}
-select{padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:#eee}
-main{max-width:1100px;margin:auto;padding:14px}
-#player{display:none;background:#000;border-radius:10px;overflow:hidden;margin-bottom:14px}
-#player video{width:100%;max-height:68vh;display:block;background:#000}
-.bar{padding:10px;display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:var(--card)}
-#pt{flex:1 1 100%;word-break:break-all;color:var(--mut);font-size:13px}
-.row{display:flex;gap:8px;align-items:center;padding:10px;border-bottom:1px solid var(--line)}
-.row.cur{background:#1d1a33}.row .t{flex:1;word-break:break-all}
+input[type=search],input:not([type]){flex:1;min-width:0;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:#eee;font-size:16px}
+button{min-height:42px;padding:9px 13px;border:0;border-radius:10px;background:var(--acc);color:#fff;font-weight:600;font-size:15px;cursor:pointer;white-space:nowrap}
+button.sec{background:#2a2a31}button.danger{background:#7a2330}button:disabled{opacity:.4;cursor:default}
+nav{display:flex;gap:6px;margin-top:8px;overflow-x:auto;scrollbar-width:none}nav::-webkit-scrollbar{display:none}
+nav button{background:transparent;border:1px solid var(--line);flex:none}nav button.on{background:#2a2a31}
+select{min-height:42px;padding:8px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:#eee;font-size:15px;flex:none}
+main{max-width:1100px;margin:auto;padding:12px}
+/* Player: feste 16:9-Buehne, schrumpft beim Laden nicht */
+#player{display:none;background:#000;border-radius:12px;overflow:hidden;margin-bottom:12px;position:sticky;top:0;z-index:5}
+#stage{position:relative;width:100%;aspect-ratio:16/9;max-height:70vh;background:#000;touch-action:pan-y}
+#stage video{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:#000}
+#ov{position:absolute;inset:0;display:none;flex-direction:column;gap:12px;align-items:center;justify-content:center;background:rgba(0,0,0,.85);text-align:center;padding:16px;z-index:2}
+#ov.on{display:flex}#ovt{color:#ddd;font-size:14px;max-width:90%;word-break:break-word}
+.spin{width:38px;height:38px;border:4px solid #444;border-top-color:var(--acc);border-radius:50%;animation:sp 1s linear infinite}
+@keyframes sp{to{transform:rotate(360deg)}}
+#tap{display:none;font-size:18px;padding:14px 22px}
+#swipe{position:absolute;top:50%;transform:translateY(-50%);font-size:44px;opacity:0;transition:opacity .2s;pointer-events:none;z-index:3;text-shadow:0 0 8px #000}
+#pt{padding:8px 10px 0;color:var(--mut);font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;background:var(--card)}
+.ctl{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;padding:8px 10px;background:var(--card)}
+.ctl button{padding:8px 0;font-size:18px;background:#2a2a31}.ctl button.txt{font-size:14px}.ctl button.main{background:var(--acc)}
+.ctl2{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:0 10px 10px;background:var(--card)}
+.ctl2 label{color:var(--mut);font-size:13px;display:flex;align-items:center;gap:6px;margin-right:auto}
+.ctl2 button{min-height:36px;padding:6px 10px;font-size:13px}
+#fav-btn{color:var(--fav)}
+/* Pseudo-Vollbild (auch iPhone) */
+#player.fs{position:fixed;inset:0;margin:0;border-radius:0;z-index:50;display:flex !important;flex-direction:column;background:#000}
+#player.fs #stage{flex:1;aspect-ratio:auto;max-height:none}
+#player.fs #pt,#player.fs .ctl,#player.fs .ctl2{background:rgba(22,22,26,.95)}
+#player.fs .ctl2{padding-bottom:calc(10px + env(safe-area-inset-bottom))}
+/* Listen */
+.row{display:flex;gap:8px;align-items:center;padding:10px 6px;border-bottom:1px solid var(--line)}
+.row.cur{background:#1d1a33;border-radius:8px}.row .t{flex:1;min-width:0;word-break:break-word}
 .meta{color:var(--mut);font-size:12px;margin-top:3px}
-#msg{color:var(--mut);padding:6px 0}.err{color:#ff7b7b}
-.files{padding:2px 10px 8px 30px;font-size:13px}.files a{color:#b9b0ff;cursor:pointer;display:block;padding:3px 0}
-.star{background:transparent;border:1px solid var(--line);color:var(--fav);font-size:16px;padding:7px 10px}
-.hist a{display:inline-block;margin:4px;padding:6px 10px;border-radius:20px;background:var(--card);color:#ddd;cursor:pointer;text-decoration:none}
-.box{background:var(--card);border-radius:10px;padding:14px;margin-bottom:12px}
-.box p{color:var(--mut);margin:6px 0 12px}
+.row .acts{display:flex;gap:6px;flex:none}
+#msg{color:var(--mut);padding:4px 0 8px}.err{color:#ff7b7b}
+.files{padding:2px 10px 8px 22px;font-size:13px}.files a{color:#b9b0ff;cursor:pointer;display:block;padding:6px 0}
+.star{background:transparent;border:1px solid var(--line);color:var(--fav);font-size:18px;padding:6px 11px}
+.hist a{display:inline-block;margin:4px;padding:8px 12px;border-radius:20px;background:#2a2a31;color:#ddd;cursor:pointer}
+.box{background:var(--card);border-radius:12px;padding:14px;margin-bottom:12px}.box p{color:var(--mut);margin:6px 0 12px}
 kbd{background:#2a2a31;border-radius:4px;padding:1px 5px;font-size:12px}
+@media (max-width:640px){
+ header{padding:8px 10px}main{padding:8px}
+ #player{margin:0 -8px 10px;border-radius:0}
+ .row{flex-wrap:wrap}.row .acts{width:100%}.row .acts button{flex:1}
+ .ctl button{font-size:17px;min-height:46px}
+ .hide-m{display:none}
+}
 </style></head><body>
 <header><div class="wrap">
-<form id="f"><input id="q" placeholder="Indexer durchsuchen, z.B. Blume" autocomplete="off" list="recent"><datalist id="recent"></datalist><button>Suchen</button></form>
-<nav><select id="flt" title="Filter"><option value="video">🎬 Nur Videos</option><option value="nobook">Ohne Bücher/Audio/Software</option><option value="all">Alles</option></select><button data-tab="res" class="on">Ergebnisse</button><button data-tab="fav">★ Favoriten</button><button data-tab="priv">Verlauf &amp; Privatsphäre</button></nav>
+<form id="f"><input id="q" type="search" enterkeyhint="search" placeholder="Indexer durchsuchen …" autocomplete="off" list="recent"><datalist id="recent"></datalist><button>Suchen</button></form>
+<nav><select id="flt" title="Filter"><option value="video">🎬 Nur Videos</option><option value="nobook">Ohne Bücher/Audio</option><option value="all">Alles</option></select>
+<button data-tab="res" class="on">Ergebnisse</button><button data-tab="fav">★<span class="hide-m"> Favoriten</span></button><button data-tab="priv">Verlauf</button></nav>
 </div></header>
 <main>
-<div id="player"><video id="v" controls playsinline></video>
-<div class="bar"><span id="pt"></span>
-<button class="sec" id="prev">⏮ Zurück</button><button class="sec" id="back">−10 s</button><button class="sec" id="fwd">+30 s</button><button id="next">Weiter ⏭</button>
-<button class="star" id="pfav" title="Favorit">☆</button>
-<label style="color:var(--mut);font-size:13px"><input type="checkbox" id="auto" style="flex:none"> Autoplay weiter</label>
-<button class="sec" id="copy">Link kopieren</button><a id="vlc"><button class="sec">In VLC</button></a></div></div>
+<div id="player">
+ <div id="stage"><video id="v" playsinline webkit-playsinline preload="auto" controls></video>
+  <div id="ov"><div class="spin" id="spin"></div><div id="ovt"></div><button id="tap">▶ Abspielen</button></div>
+  <div id="swipe"></div></div>
+ <div id="pt"></div>
+ <div class="ctl">
+  <button id="prev" title="Zurück (P)">⏮</button><button id="back" title="−10 s" class="txt">−10s</button><button id="pp" class="main" title="Play/Pause">⏯</button>
+  <button id="fwd" title="+30 s" class="txt">+30s</button><button id="next" title="Weiter (N)">⏭</button><button id="fav-btn" title="Favorit (F)">☆</button><button id="fsb" title="Vollbild">⛶</button></div>
+ <div class="ctl2"><label><input type="checkbox" id="auto"> Autoplay weiter</label>
+  <button class="sec" id="copy">Link kopieren</button><a id="vlc"><button class="sec">In VLC</button></a><button class="sec" id="close">✕</button></div>
+</div>
 <div id="msg"></div>
 <section id="tab-res"><div id="list"></div></section>
 <section id="tab-fav" hidden><div id="favs"></div></section>
 <section id="tab-priv" hidden>
  <div class="box"><b>Suchverlauf</b><p>Letzte Suchen (nur in InfiniSearch gespeichert).</p><div class="hist" id="hist"></div><br>
   <button class="danger" id="delhist">Suchverlauf löschen</button></div>
- <div class="box"><b>Geladene NZBs</b><p>Alle NZBs, die InfiniSearch in InfiniDysk eingereiht hat, inkl. Mount entfernen. Favoriten bleiben erhalten (NZB liegt lokal) und lassen sich jederzeit neu abspielen. Einträge aus Sonarr/Radarr/Stremio werden nicht angefasst.</p>
+ <div class="box"><b>Geladene NZBs</b><p>Alle NZBs, die InfiniSearch in InfiniDysk eingereiht hat, inkl. Mount entfernen. Favoriten bleiben erhalten (NZB liegt lokal). Einträge aus Sonarr/Radarr/Stremio werden nicht angefasst.</p>
   <span id="loaded" style="color:var(--mut)"></span><br><br><button class="danger" id="delloaded">Geladene NZBs löschen</button></div>
  <div class="box"><button class="danger" id="delall">Alles löschen (Verlauf + geladene NZBs)</button><p>Favoriten bleiben.</p></div>
- <div class="box"><b>Tastatur</b><p><kbd>N</kbd> weiter · <kbd>P</kbd> zurück · <kbd>F</kbd> Favorit · <kbd>←</kbd>/<kbd>→</kbd> spulen · <kbd>Leertaste</kbd> Pause</p></div>
+ <div class="box"><b>Bedienung</b><p>Handy: im Video nach <b>links wischen</b> = weiter, nach <b>rechts</b> = zurück. Kopfhörer-/Sperrbildschirm-Tasten ⏮ ⏭ funktionieren.<br>
+  Tastatur: <kbd>N</kbd> weiter · <kbd>P</kbd> zurück · <kbd>F</kbd> Favorit · <kbd>←</kbd>/<kbd>→</kbd> spulen · <kbd>Leertaste</kbd> Pause</p></div>
 </section>
 </main>
 <script>
@@ -418,6 +454,7 @@ const NONVIDEO=/(^|[^a-z0-9])(epub|mobi|azw3?|pdf|cbr|cbz|djvu|e-?books?|magazin
 const VIDEO=/(^|[^a-z0-9])(2160p|1080[pi]|720p|576p|540p|480p|4k|uhd|x\.?26[45]|h\.?26[45]|hevc|avc|xvid|divx|av1|vp9|web-?dl|web-?rip|web|bluray|blu-ray|bdrip|brrip|bd|remux|dvd-?rip|dvd|dvdr|hdtv|hdrip|tvrip|pdtv|sdtv|mkv|mp4|avi|m2ts|wmv|s\d{1,2}e\d{1,3}|s\d{1,2}|e\d{2,4}|episode|folge|staffel|season)([^a-z0-9]|$)/i;
 const keep=(t,m)=>m==='all'?true:m==='nobook'?!NONVIDEO.test(t):(VIDEO.test(t)&&!NONVIDEO.test(t));
 let results=[],shown=[],favs=[],list=[],listKind='res',cur=-1,curUrl='',curNzo=null,run=0;
+const v=$('#v');
 const msg=(h,e)=>$('#msg').innerHTML=e?'<span class="err">'+esc(h)+'</span>':h;
 
 function tab(t){$$('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));['res','fav','priv'].forEach(x=>$('#tab-'+x).hidden=x!==t);
@@ -425,7 +462,7 @@ function tab(t){$$('nav button').forEach(b=>b.classList.toggle('on',b.dataset.ta
 $$('nav button').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
 
 async function loadRecent(){try{const s=await api('api/searches');$('#recent').innerHTML=s.slice(0,20).map(x=>`<option value="${esc(x.q)}">`).join('');return s}catch(e){return[]}}
-$('#f').onsubmit=async e=>{e.preventDefault();const q=$('#q').value.trim();if(!q)return;tab('res');
+$('#f').onsubmit=async e=>{e.preventDefault();const q=$('#q').value.trim();if(!q)return;$('#q').blur();tab('res');
  msg('Suche läuft …');$('#list').innerHTML='';
  try{const d=await api('api/search?q='+encodeURIComponent(q));results=d.results||[];
   const bad=(d.indexers||[]).filter(i=>!i.ok).map(i=>i.name+': '+i.error);
@@ -433,13 +470,13 @@ $('#f').onsubmit=async e=>{e.preventDefault();const q=$('#q').value.trim();if(!q
   renderRes();loadRecent()}catch(err){msg(err.message,1)}};
 
 const isFav=x=>favs.some(f=>f.nzbUrl&&f.nzbUrl===x.nzbUrl);
-function rowHtml(x,i,kind){const fav=kind==='fav'||isFav(x);return `<div><div class="row" id="${kind}${i}"><div class="t">${esc(x.title)}
+function rowHtml(x,i,kind){const fav=kind==='fav'||isFav(x);return `<div><div class="row${kind===listKind&&i===cur?' cur':''}" id="${kind}${i}"><div class="t">${esc(x.title)}
  <div class="meta">${fmt(x.size)} · ${esc(x.indexer||'')} · ${x.posted?new Date(x.posted).toLocaleDateString('de-DE'):x.ts?'gespeichert '+new Date(x.ts*1000).toLocaleDateString('de-DE'):''}</div></div>
- <button data-play="${i}" data-kind="${kind}">▶ Play</button>
- ${kind==='fav'?`<button class="danger" data-unfav="${i}">Entfernen</button>`:`<button class="star" data-fav="${i}" title="Favorit">${fav?'★':'☆'}</button>`}</div>
+ <div class="acts"><button data-play="${i}" data-kind="${kind}">▶ Play</button>
+ ${kind==='fav'?`<button class="danger" data-unfav="${i}">Entfernen</button>`:`<button class="star" data-fav="${i}" title="Favorit">${fav?'★':'☆'}</button>`}</div></div>
  <div class="files" id="fi-${kind}${i}"></div></div>`}
 function renderRes(){const m=$('#flt').value;shown=results.filter(x=>keep(x.title||'',m));
- const hid=results.length-shown.length;$('#list').innerHTML=(hid?`<div class="meta" style="padding:6px 10px">${hid} von ${results.length} Treffern ausgeblendet (Filter: ${$('#flt').selectedOptions[0].text})</div>`:'')+shown.map((x,i)=>rowHtml(x,i,'res')).join('');bind()}
+ const hid=results.length-shown.length;$('#list').innerHTML=(hid?`<div class="meta" style="padding:4px 6px">${hid} von ${results.length} Treffern ausgeblendet (Filter: ${$('#flt').selectedOptions[0].text})</div>`:'')+shown.map((x,i)=>rowHtml(x,i,'res')).join('');bind()}
 $('#flt').value=localStorage.getItem('flt')||'video';$('#flt').onchange=()=>{localStorage.setItem('flt',$('#flt').value);renderRes()};
 function renderFavs(){$('#favs').innerHTML=favs.length?favs.map((x,i)=>rowHtml(x,i,'fav')).join(''):'<p style="color:var(--mut)">Noch keine Favoriten.</p>';bind()}
 function bind(){$$('[data-play]').forEach(b=>b.onclick=()=>{listKind=b.dataset.kind;list=listKind==='fav'?favs:shown;play(+b.dataset.play)});
@@ -447,46 +484,78 @@ function bind(){$$('[data-play]').forEach(b=>b.onclick=()=>{listKind=b.dataset.k
  $$('[data-unfav]').forEach(b=>b.onclick=async()=>{if(!confirm('Favorit entfernen?'))return;await api('api/favorites?id='+favs[+b.dataset.unfav].id,{method:'DELETE'});loadFavs()})}
 async function loadFavs(){try{favs=await api('api/favorites');renderFavs()}catch(e){msg(e.message,1)}}
 
+/* ---------- Player ---------- */
+function overlay(text,spin=true,tap=false){$('#ov').classList.toggle('on',!!text);v.controls=!text;$('#ovt').textContent=text||'';$('#spin').style.display=spin?'block':'none';$('#tap').style.display=tap?'inline-block':'none'}
+function title(t){$('#pt').textContent=(cur+1)+'/'+list.length+' · '+t}
 async function play(i){if(i<0||i>=list.length)return;const my=++run;cur=i;const x=list[i];
- $$('.row').forEach(r=>r.classList.remove('cur'));const row=$('#'+listKind+i);row&&row.classList.add('cur');
- const box=$('#fi-'+listKind+i);const say=t=>{if(box)box.textContent=t;$('#pt').textContent=(i+1)+'/'+list.length+' · '+x.title+' — '+t};
- $('#player').style.display='block';const v=$('#v');v.pause();v.removeAttribute('src');v.load();updNav();say('Wird eingereiht …');
+ $$('.row').forEach(r=>r.classList.remove('cur'));const row=$('#'+listKind+i);if(row){row.classList.add('cur');if(!$('#player').classList.contains('fs'))row.scrollIntoView({block:'nearest'})}
+ const box=$('#fi-'+listKind+i);
+ $('#player').style.display='block';v.pause();             // altes Bild bleibt stehen, Groesse bleibt gleich
+ title(x.title);overlay('Wird eingereiht …');updNav();setMeta(x.title);
  try{const d0=await api('api/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(listKind==='fav'?{favId:x.id}:{nzbUrl:x.nzbUrl,title:x.title})});
   curNzo=d0.nzo;
   for(let n=0;n<400;n++){if(my!==run)return;const d=await api('api/status?nzo='+encodeURIComponent(curNzo));if(my!==run)return;
    if(d.state==='ready'){const fs=d.files||[];
-    if(box){box.innerHTML=fs.map((f,j)=>`<a data-j="${j}">${f.video?'🎬':'📄'} ${esc(f.name)} (${fmt(f.size)})</a>`).join('');box.querySelectorAll('a').forEach(a=>a.onclick=()=>show(fs[a.dataset.j],x,i))}
-    const vf=fs.find(f=>f.video);if(!vf){say('Kein Video in diesem Release');if($('#auto').checked)play(i+1);return}
-    show(vf,x,i);return}
+    if(box){box.innerHTML=fs.map((f,j)=>`<a data-j="${j}">${f.video?'🎬':'📄'} ${esc(f.name)} (${fmt(f.size)})</a>`).join('');box.querySelectorAll('a').forEach(a=>a.onclick=()=>show(fs[a.dataset.j]))}
+    const vf=fs.find(f=>f.video);
+    if(!vf){if($('#auto').checked&&i<list.length-1){overlay('Kein Video – überspringe …');return play(i+1)}overlay('Kein Video in diesem Release',false);return}
+    show(vf);return}
    if(d.state==='failed')throw new Error('Fehlgeschlagen: '+(d.error||''));
-   say(d.state==='queued'?`In der Queue: ${d.status||''} ${d.percentage??''}%`:'Warte auf InfiniDysk …');
-   await new Promise(s=>setTimeout(s,1500))}
-  say('Zeitüberschreitung')}catch(err){if(my===run){say('Fehler: '+err.message);if(box)box.innerHTML='<span class="err">'+esc(err.message)+'</span>'}}}
-function show(f,x,i){curUrl=f.url;$('#pt').textContent=(i+1)+'/'+list.length+' · '+f.name;const v=$('#v');v.src=f.url;v.play().catch(()=>{});
- $('#vlc').href='vlc://'+f.url;updNav();window.scrollTo({top:0,behavior:'smooth'})}
+   overlay(d.state==='queued'?`In der Queue: ${d.status||''} ${d.percentage??''}%`:'Warte auf InfiniDysk …');
+   await new Promise(s=>setTimeout(s,1200))}
+  overlay('Zeitüberschreitung',false)}catch(err){if(my===run)overlay('Fehler: '+err.message,false)}}
+function show(f){showRun=run;curUrl=f.url;title(f.name);overlay('Lädt Video …');v.src=f.url;$('#vlc').href='vlc://'+f.url;updNav();tryPlay()}
+let showRun=0;
+function tryPlay(){const my=run;const p=v.play();if(p)p.then(()=>{if(my===run)overlay('')},()=>{if(my===run&&showRun===run&&!v.error)overlay('Tippen zum Abspielen',false,true)})}
+$('#tap').onclick=()=>{overlay('');v.play().catch(()=>{})};
+v.addEventListener('playing',()=>{if(showRun===run)overlay('')});
+v.addEventListener('waiting',()=>{if(showRun===run&&v.currentTime>0)overlay('Puffert …')});
+v.addEventListener('error',()=>{if(showRun===run&&v.getAttribute('src'))overlay('Browser kann das Format evtl. nicht abspielen – „Link kopieren“ oder „In VLC“.',false)});
+v.addEventListener('ended',()=>{if($('#auto').checked)play(cur+1)});
 function updNav(){$('#prev').disabled=cur<=0;$('#next').disabled=cur>=list.length-1;const x=list[cur];
- $('#pfav').textContent=(listKind==='fav'||(x&&isFav(x)))?'★':'☆'}
-$('#v').onerror=()=>{if($('#v').getAttribute('src'))$('#pt').textContent+=' — Browser kann das Format evtl. nicht abspielen: Link kopieren / In VLC.'};
-$('#v').onended=()=>{if($('#auto').checked)play(cur+1)};
+ $('#fav-btn').textContent=(listKind==='fav'||(x&&isFav(x)))?'★':'☆'}
 $('#next').onclick=()=>play(cur+1);$('#prev').onclick=()=>play(cur-1);
-$('#back').onclick=()=>{$('#v').currentTime-=10};$('#fwd').onclick=()=>{$('#v').currentTime+=30};
-$('#pfav').onclick=()=>{if(listKind==='fav'||cur<0)return;favorite(list[cur],curNzo,null)};
-async function favorite(x,nzo,btn){if(isFav(x))return;const el=btn||$('#pfav');el.disabled=true;el.textContent='…';
+$('#back').onclick=()=>{v.currentTime=Math.max(0,v.currentTime-10)};$('#fwd').onclick=()=>{v.currentTime+=30};
+$('#pp').onclick=()=>{v.paused?tryPlay():v.pause()};
+$('#close').onclick=()=>{run++;v.pause();v.removeAttribute('src');v.load();exitFs();$('#player').style.display='none';$$('.row').forEach(r=>r.classList.remove('cur'))};
+$('#fav-btn').onclick=()=>{if(listKind==='fav'||cur<0)return;favorite(list[cur],curNzo,null)};
+async function favorite(x,nzo,btn){if(!x||isFav(x))return;const el=btn||$('#fav-btn');el.disabled=true;el.textContent='…';
  try{await api('api/favorites',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nzo:nzo||undefined,nzbUrl:x.nzbUrl,title:x.title,size:x.size,indexer:x.indexer})});
   await loadFavs();renderRes();updNav()}catch(e){alert('Favorit fehlgeschlagen: '+e.message);el.textContent='☆'}finally{el.disabled=false}}
 $('#copy').onclick=()=>{navigator.clipboard?.writeText(curUrl).then(()=>{$('#copy').textContent='Kopiert ✓';setTimeout(()=>$('#copy').textContent='Link kopieren',1500)},()=>prompt('Link:',curUrl))};
-document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT')return;const v=$('#v');
- if(e.key==='n'||e.key==='N')play(cur+1);else if(e.key==='p'||e.key==='P')play(cur-1);else if(e.key==='f'||e.key==='F')$('#pfav').click();
- else if(e.key==='ArrowRight'&&document.activeElement!==v){v.currentTime+=10;e.preventDefault()}
- else if(e.key==='ArrowLeft'&&document.activeElement!==v){v.currentTime-=10;e.preventDefault()}
- else if(e.key===' '&&document.activeElement!==v&&v.getAttribute('src')){v.paused?v.play():v.pause();e.preventDefault()}});
 
+/* Vollbild: ganzer Player inkl. Weiter-Tasten; auf iPhone als Pseudo-Vollbild */
+const P=$('#player');
+function enterFs(){P.classList.add('fs');document.body.style.overflow='hidden';const r=P.requestFullscreen||P.webkitRequestFullscreen;if(r)try{const x=r.call(P);x&&x.catch&&x.catch(()=>{})}catch(e){}
+ try{screen.orientation&&screen.orientation.lock&&screen.orientation.lock('landscape').catch(()=>{})}catch(e){}}
+function exitFs(){P.classList.remove('fs');document.body.style.overflow='';if(document.fullscreenElement||document.webkitFullscreenElement)(document.exitFullscreen||document.webkitExitFullscreen).call(document)}
+$('#fsb').onclick=()=>P.classList.contains('fs')?exitFs():enterFs();
+document.addEventListener('fullscreenchange',()=>{if(!document.fullscreenElement)P.classList.remove('fs'),document.body.style.overflow=''});
+
+/* Wischen im Video: links = weiter, rechts = zurueck */
+let tx=0,ty=0,tt=0;const st=$('#stage');
+st.addEventListener('touchstart',e=>{const t=e.touches[0];tx=t.clientX;ty=t.clientY;tt=Date.now()},{passive:true});
+st.addEventListener('touchend',e=>{const t=e.changedTouches[0],dx=t.clientX-tx,dy=t.clientY-ty;
+ if(Math.abs(dx)>70&&Math.abs(dy)<60&&Date.now()-tt<600){const sw=$('#swipe');sw.textContent=dx<0?'⏭':'⏮';sw.style[dx<0?'right':'left']='16px';sw.style[dx<0?'left':'right']='';sw.style.opacity=1;setTimeout(()=>sw.style.opacity=0,450);dx<0?play(cur+1):play(cur-1)}},{passive:true});
+
+/* Sperrbildschirm / Kopfhoerer */
+function setMeta(t){if(!('mediaSession' in navigator))return;try{navigator.mediaSession.metadata=new MediaMetadata({title:t,artist:'InfiniSearch'})}catch(e){}}
+if('mediaSession' in navigator){const ms=navigator.mediaSession;
+ [['nexttrack',()=>play(cur+1)],['previoustrack',()=>play(cur-1)],['seekbackward',()=>$('#back').click()],['seekforward',()=>$('#fwd').click()]].forEach(([a,f])=>{try{ms.setActionHandler(a,f)}catch(e){}})}
+
+document.addEventListener('keydown',e=>{if(e.target.tagName==='INPUT'||e.target.tagName==='SELECT')return;
+ if(e.key==='n'||e.key==='N')play(cur+1);else if(e.key==='p'||e.key==='P')play(cur-1);else if(e.key==='f'||e.key==='F')$('#fav-btn').click();
+ else if(e.key==='Escape'&&P.classList.contains('fs'))exitFs();
+ else if(e.key==='ArrowRight'&&document.activeElement!==v){v.currentTime+=10;e.preventDefault()}
+ else if(e.key==='ArrowLeft'&&document.activeElement!==v){v.currentTime=Math.max(0,v.currentTime-10);e.preventDefault()}
+ else if(e.key===' '&&document.activeElement!==v&&v.getAttribute('src')){$('#pp').click();e.preventDefault()}});
+
+/* Verlauf & Privatsphaere */
 async function loadPriv(){const s=await loadRecent();$('#hist').innerHTML=s.length?s.map(x=>`<a data-q="${esc(x.q)}">${esc(x.q)}</a>`).join(''):'<span style="color:var(--mut)">leer</span>';
  $$('#hist a').forEach(a=>a.onclick=()=>{$('#q').value=a.dataset.q;$('#f').requestSubmit()});
  try{const l=await api('api/loaded');$('#loaded').textContent=l.count+' NZB(s) von InfiniSearch in InfiniDysk geladen'}catch(e){$('#loaded').textContent=e.message}}
 async function delHist(){await api('api/searches',{method:'DELETE'})}
-async function delLoaded(){const v=$('#v');v.pause();v.removeAttribute('src');v.load();$('#player').style.display='none';run++;
- const r=await api('api/loaded',{method:'DELETE'});if(r.errors&&r.errors.length)throw new Error(r.errors.join(' | '));return r.removed}
+async function delLoaded(){$('#close').click();const r=await api('api/loaded',{method:'DELETE'});if(r.errors&&r.errors.length)throw new Error(r.errors.join(' | '));return r.removed}
 $('#delhist').onclick=async()=>{if(!confirm('Suchverlauf löschen?'))return;await delHist();loadPriv()};
 $('#delloaded').onclick=async()=>{if(!confirm('Alle geladenen NZBs aus InfiniDysk entfernen?'))return;try{const n=await delLoaded();alert(n+' entfernt')}catch(e){alert(e.message)}loadPriv()};
 $('#delall').onclick=async()=>{if(!confirm('Suchverlauf UND geladene NZBs löschen? Favoriten bleiben.'))return;
