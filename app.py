@@ -247,7 +247,7 @@ def cleanup_loaded():
 
 # ---------------------------------------------------------------- HTTP
 class H(BaseHTTPRequestHandler):
-    server_version = "InfiniSearch/2.2"
+    server_version = "InfiniSearch/2.3"
 
     def log_message(self, fmt, *a):
         # keine Suchbegriffe/Pfade ins Log schreiben (Privatsphaere)
@@ -391,6 +391,9 @@ main{max-width:1100px;margin:auto;padding:12px}
 .ctl2 label{color:var(--mut);font-size:13px;display:flex;align-items:center;gap:6px;margin-right:auto}
 .ctl2 button{min-height:36px;padding:6px 10px;font-size:13px}
 #fav-btn{color:var(--fav)}
+.ctl3{padding:0 10px 8px;background:var(--card)}.ctl3 select{width:100%;min-height:40px}
+#refine{display:none;gap:8px;margin:0 0 8px}#refine input{flex:1;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:#eee;font-size:16px}
+#player.fs .ctl3{background:rgba(22,22,26,.95)}
 /* Pseudo-Vollbild (auch iPhone) */
 #player.fs{position:fixed;inset:0;margin:0;border-radius:0;z-index:50;display:flex !important;flex-direction:column;background:#000}
 #player.fs #stage{flex:1;aspect-ratio:auto;max-height:none}
@@ -429,11 +432,12 @@ kbd{background:#2a2a31;border-radius:4px;padding:1px 5px;font-size:12px}
  <div class="ctl">
   <button id="prev" title="Zurück (P)">⏮</button><button id="back" title="−10 s" class="txt">−10s</button><button id="pp" class="main" title="Play/Pause">⏯</button>
   <button id="fwd" title="+30 s" class="txt">+30s</button><button id="next" title="Weiter (N)">⏭</button><button id="fav-btn" title="Favorit (F)">☆</button><button id="fsb" title="Vollbild">⛶</button></div>
+ <div class="ctl3"><select id="jump" title="Springen zu …"></select></div>
  <div class="ctl2"><label><input type="checkbox" id="auto"> Autoplay weiter</label>
   <button class="sec" id="copy">Link kopieren</button><a id="vlc"><button class="sec">In VLC</button></a><button class="sec" id="close">✕</button></div>
 </div>
 <div id="msg"></div>
-<section id="tab-res"><div id="list"></div></section>
+<section id="tab-res"><div id="refine"><input id="rf" type="search" placeholder="Treffer verfeinern, z.B. 1080p german -cam" autocomplete="off" enterkeyhint="done"><button class="sec" id="rfx">✕</button></div><div id="list"></div></section>
 <section id="tab-fav" hidden><div id="favs"></div></section>
 <section id="tab-priv" hidden>
  <div class="box"><b>Suchverlauf</b><p>Letzte Suchen (nur in InfiniSearch gespeichert).</p><div class="hist" id="hist"></div><br>
@@ -453,6 +457,8 @@ const api=async(p,o)=>{const r=await fetch(p,o);const d=await r.json().catch(()=
 const NONVIDEO=/(^|[^a-z0-9])(epub|mobi|azw3?|pdf|cbr|cbz|djvu|e-?books?|magazines?|zeitschrift|audiobooks?|h(ö|oe)rb(u|ü)ch(er)?|mp3|flac|m4b|aac|ogg|wav|alac|320kbps|24bit|discography|exe|apk|dmg|msi)([^a-z0-9]|$)/i;
 const VIDEO=/(^|[^a-z0-9])(2160p|1080[pi]|720p|576p|540p|480p|4k|uhd|x\.?26[45]|h\.?26[45]|hevc|avc|xvid|divx|av1|vp9|web-?dl|web-?rip|web|bluray|blu-ray|bdrip|brrip|bd|remux|dvd-?rip|dvd|dvdr|hdtv|hdrip|tvrip|pdtv|sdtv|mkv|mp4|avi|m2ts|wmv|s\d{1,2}e\d{1,3}|s\d{1,2}|e\d{2,4}|episode|folge|staffel|season)([^a-z0-9]|$)/i;
 const keep=(t,m)=>m==='all'?true:m==='nobook'?!NONVIDEO.test(t):(VIDEO.test(t)&&!NONVIDEO.test(t));
+const norm=t=>t.toLowerCase().replace(/[._\-\[\]()]+/g,' ');
+function refineOk(t,q){const n=' '+norm(t)+' ';return q.trim().split(/\s+/).filter(Boolean).every(w=>{const neg=w[0]==='-'&&w.length>1;const k=norm(neg?w.slice(1):w).trim();if(!k)return true;const hit=n.includes(k);return neg?!hit:hit})}
 let results=[],shown=[],favs=[],list=[],listKind='res',cur=-1,curUrl='',curNzo=null,run=0;
 const v=$('#v');
 const msg=(h,e)=>$('#msg').innerHTML=e?'<span class="err">'+esc(h)+'</span>':h;
@@ -463,7 +469,7 @@ $$('nav button').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
 
 async function loadRecent(){try{const s=await api('api/searches');$('#recent').innerHTML=s.slice(0,20).map(x=>`<option value="${esc(x.q)}">`).join('');return s}catch(e){return[]}}
 $('#f').onsubmit=async e=>{e.preventDefault();const q=$('#q').value.trim();if(!q)return;$('#q').blur();tab('res');
- msg('Suche läuft …');$('#list').innerHTML='';
+ msg('Suche läuft …');$('#list').innerHTML='';$('#rf').value='';
  try{const d=await api('api/search?q='+encodeURIComponent(q));results=d.results||[];
   const bad=(d.indexers||[]).filter(i=>!i.ok).map(i=>i.name+': '+i.error);
   msg(results.length+' Treffer gesamt'+(bad.length?' <span class="err">· '+esc(bad.join(' | '))+'</span>':''));
@@ -475,14 +481,17 @@ function rowHtml(x,i,kind){const fav=kind==='fav'||isFav(x);return `<div><div cl
  <div class="acts"><button data-play="${i}" data-kind="${kind}">▶ Play</button>
  ${kind==='fav'?`<button class="danger" data-unfav="${i}">Entfernen</button>`:`<button class="star" data-fav="${i}" title="Favorit">${fav?'★':'☆'}</button>`}</div></div>
  <div class="files" id="fi-${kind}${i}"></div></div>`}
-function renderRes(){const m=$('#flt').value;shown=results.filter(x=>keep(x.title||'',m));
- const hid=results.length-shown.length;$('#list').innerHTML=(hid?`<div class="meta" style="padding:4px 6px">${hid} von ${results.length} Treffern ausgeblendet (Filter: ${$('#flt').selectedOptions[0].text})</div>`:'')+shown.map((x,i)=>rowHtml(x,i,'res')).join('');bind()}
+function renderRes(){const m=$('#flt').value,rq=$('#rf').value;const curItem=listKind==='res'?list[cur]:null;
+ shown=results.filter(x=>keep(x.title||'',m)&&refineOk(x.title||'',rq));
+ $('#refine').style.display=results.length?'flex':'none';
+ if(listKind==='res'){list=shown;cur=curItem?shown.indexOf(curItem):-1;fillJump();updNav()}
+ const hid=results.length-shown.length;$('#list').innerHTML=(hid?`<div class="meta" style="padding:4px 6px">${hid} von ${results.length} Treffern ausgeblendet (Filter: ${esc($('#flt').selectedOptions[0].text)}${rq.trim()?' + „'+esc(rq.trim())+'“':''})</div>`:'')+shown.map((x,i)=>rowHtml(x,i,'res')).join('');bind()}
 $('#flt').value=localStorage.getItem('flt')||'video';$('#flt').onchange=()=>{localStorage.setItem('flt',$('#flt').value);renderRes()};
 function renderFavs(){$('#favs').innerHTML=favs.length?favs.map((x,i)=>rowHtml(x,i,'fav')).join(''):'<p style="color:var(--mut)">Noch keine Favoriten.</p>';bind()}
 function bind(){$$('[data-play]').forEach(b=>b.onclick=()=>{listKind=b.dataset.kind;list=listKind==='fav'?favs:shown;play(+b.dataset.play)});
  $$('[data-fav]').forEach(b=>b.onclick=()=>favorite(shown[+b.dataset.fav],null,b));
  $$('[data-unfav]').forEach(b=>b.onclick=async()=>{if(!confirm('Favorit entfernen?'))return;await api('api/favorites?id='+favs[+b.dataset.unfav].id,{method:'DELETE'});loadFavs()})}
-async function loadFavs(){try{favs=await api('api/favorites');renderFavs()}catch(e){msg(e.message,1)}}
+async function loadFavs(){try{const ci=listKind==='fav'?list[cur]:null;favs=await api('api/favorites');if(listKind==='fav'){list=favs;cur=ci?favs.findIndex(f=>f.id===ci.id):-1;fillJump();updNav()}renderFavs()}catch(e){msg(e.message,1)}}
 
 /* ---------- Player ---------- */
 function overlay(text,spin=true,tap=false){$('#ov').classList.toggle('on',!!text);v.controls=!text;$('#ovt').textContent=text||'';$('#spin').style.display=spin?'block':'none';$('#tap').style.display=tap?'inline-block':'none'}
@@ -491,7 +500,7 @@ async function play(i){if(i<0||i>=list.length)return;const my=++run;cur=i;const 
  $$('.row').forEach(r=>r.classList.remove('cur'));const row=$('#'+listKind+i);if(row){row.classList.add('cur');if(!$('#player').classList.contains('fs'))row.scrollIntoView({block:'nearest'})}
  const box=$('#fi-'+listKind+i);
  $('#player').style.display='block';v.pause();             // altes Bild bleibt stehen, Groesse bleibt gleich
- title(x.title);overlay('Wird eingereiht …');updNav();setMeta(x.title);
+ title(x.title);overlay('Wird eingereiht …');fillJump();updNav();setMeta(x.title);
  try{const d0=await api('api/play',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(listKind==='fav'?{favId:x.id}:{nzbUrl:x.nzbUrl,title:x.title})});
   curNzo=d0.nzo;
   for(let n=0;n<400;n++){if(my!==run)return;const d=await api('api/status?nzo='+encodeURIComponent(curNzo));if(my!==run)return;
@@ -512,7 +521,9 @@ v.addEventListener('playing',()=>{if(showRun===run)overlay('')});
 v.addEventListener('waiting',()=>{if(showRun===run&&v.currentTime>0)overlay('Puffert …')});
 v.addEventListener('error',()=>{if(showRun===run&&v.getAttribute('src'))overlay('Browser kann das Format evtl. nicht abspielen – „Link kopieren“ oder „In VLC“.',false)});
 v.addEventListener('ended',()=>{if($('#auto').checked)play(cur+1)});
-function updNav(){$('#prev').disabled=cur<=0;$('#next').disabled=cur>=list.length-1;const x=list[cur];
+function fillJump(){const j=$('#jump');j.innerHTML=(cur<0?'<option value="-1">– aktuelles Video nicht in der Liste –</option>':'')+list.map((x,i)=>`<option value="${i}">${i+1}. ${esc(x.title)}${x.size?' ('+fmt(x.size)+')':''}</option>`).join('');j.value=String(cur)}
+$('#jump').onchange=e=>{const i=+e.target.value;if(i>=0)play(i)};
+function updNav(){$('#jump').value=String(cur);$('#prev').disabled=cur<=0;$('#next').disabled=cur>=list.length-1;const x=list[cur];
  $('#fav-btn').textContent=(listKind==='fav'||(x&&isFav(x)))?'★':'☆'}
 $('#next').onclick=()=>play(cur+1);$('#prev').onclick=()=>play(cur-1);
 $('#back').onclick=()=>{v.currentTime=Math.max(0,v.currentTime-10)};$('#fwd').onclick=()=>{v.currentTime+=30};
@@ -560,6 +571,9 @@ $('#delhist').onclick=async()=>{if(!confirm('Suchverlauf löschen?'))return;awai
 $('#delloaded').onclick=async()=>{if(!confirm('Alle geladenen NZBs aus InfiniDysk entfernen?'))return;try{const n=await delLoaded();alert(n+' entfernt')}catch(e){alert(e.message)}loadPriv()};
 $('#delall').onclick=async()=>{if(!confirm('Suchverlauf UND geladene NZBs löschen? Favoriten bleiben.'))return;
  try{await delHist();await delLoaded();results=[];renderRes();$('#q').value='';msg('Gelöscht.')}catch(e){alert(e.message)}loadPriv()};
+let rfT;$('#rf').oninput=()=>{clearTimeout(rfT);rfT=setTimeout(renderRes,150)};
+$('#rf').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#rf').blur()}};
+$('#rfx').onclick=()=>{$('#rf').value='';renderRes()};
 loadRecent();loadFavs();
 </script></body></html>"""
 
