@@ -247,7 +247,7 @@ def cleanup_loaded():
 
 # ---------------------------------------------------------------- HTTP
 class H(BaseHTTPRequestHandler):
-    server_version = "InfiniSearch/2"
+    server_version = "InfiniSearch/2.1"
 
     def log_message(self, fmt, *a):
         # keine Suchbegriffe/Pfade ins Log schreiben (Privatsphaere)
@@ -369,6 +369,7 @@ button{padding:9px 13px;border:0;border-radius:8px;background:var(--acc);color:#
 button.sec{background:#2a2a31}button.danger{background:#7a2330}button:disabled{opacity:.45;cursor:default}
 nav{display:flex;gap:6px;margin-top:10px;flex-wrap:wrap}nav button{background:transparent;border:1px solid var(--line)}
 nav button.on{background:#2a2a31}
+select{padding:8px;border-radius:8px;border:1px solid var(--line);background:var(--card);color:#eee}
 main{max-width:1100px;margin:auto;padding:14px}
 #player{display:none;background:#000;border-radius:10px;overflow:hidden;margin-bottom:14px}
 #player video{width:100%;max-height:68vh;display:block;background:#000}
@@ -387,7 +388,7 @@ kbd{background:#2a2a31;border-radius:4px;padding:1px 5px;font-size:12px}
 </style></head><body>
 <header><div class="wrap">
 <form id="f"><input id="q" placeholder="Indexer durchsuchen, z.B. Blume" autocomplete="off" list="recent"><datalist id="recent"></datalist><button>Suchen</button></form>
-<nav><button data-tab="res" class="on">Ergebnisse</button><button data-tab="fav">★ Favoriten</button><button data-tab="priv">Verlauf &amp; Privatsphäre</button></nav>
+<nav><select id="flt" title="Filter"><option value="video">🎬 Nur Videos</option><option value="nobook">Ohne Bücher/Audio/Software</option><option value="all">Alles</option></select><button data-tab="res" class="on">Ergebnisse</button><button data-tab="fav">★ Favoriten</button><button data-tab="priv">Verlauf &amp; Privatsphäre</button></nav>
 </div></header>
 <main>
 <div id="player"><video id="v" controls playsinline></video>
@@ -413,7 +414,10 @@ const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
 const fmt=b=>{b=+b;if(!b)return'';const u=['B','KB','MB','GB','TB'];let i=0;while(b>=1024&&i<4){b/=1024;i++}return b.toFixed(i>2?2:0)+' '+u[i]};
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const api=async(p,o)=>{const r=await fetch(p,o);const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.error||('HTTP '+r.status));return d};
-let results=[],favs=[],list=[],listKind='res',cur=-1,curUrl='',curNzo=null,run=0;
+const NONVIDEO=/(^|[^a-z0-9])(epub|mobi|azw3?|pdf|cbr|cbz|djvu|e-?books?|magazines?|zeitschrift|audiobooks?|h(ö|oe)rb(u|ü)ch(er)?|mp3|flac|m4b|aac|ogg|wav|alac|320kbps|24bit|discography|exe|apk|dmg|msi)([^a-z0-9]|$)/i;
+const VIDEO=/(^|[^a-z0-9])(2160p|1080[pi]|720p|576p|540p|480p|4k|uhd|x\.?26[45]|h\.?26[45]|hevc|avc|xvid|divx|av1|vp9|web-?dl|web-?rip|web|bluray|blu-ray|bdrip|brrip|bd|remux|dvd-?rip|dvd|dvdr|hdtv|hdrip|tvrip|pdtv|sdtv|mkv|mp4|avi|m2ts|wmv|s\d{1,2}e\d{1,3}|s\d{1,2}|e\d{2,4}|episode|folge|staffel|season)([^a-z0-9]|$)/i;
+const keep=(t,m)=>m==='all'?true:m==='nobook'?!NONVIDEO.test(t):(VIDEO.test(t)&&!NONVIDEO.test(t));
+let results=[],shown=[],favs=[],list=[],listKind='res',cur=-1,curUrl='',curNzo=null,run=0;
 const msg=(h,e)=>$('#msg').innerHTML=e?'<span class="err">'+esc(h)+'</span>':h;
 
 function tab(t){$$('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));['res','fav','priv'].forEach(x=>$('#tab-'+x).hidden=x!==t);
@@ -425,7 +429,7 @@ $('#f').onsubmit=async e=>{e.preventDefault();const q=$('#q').value.trim();if(!q
  msg('Suche läuft …');$('#list').innerHTML='';
  try{const d=await api('api/search?q='+encodeURIComponent(q));results=d.results||[];
   const bad=(d.indexers||[]).filter(i=>!i.ok).map(i=>i.name+': '+i.error);
-  msg(results.length+' Treffer'+(bad.length?' <span class="err">· '+esc(bad.join(' | '))+'</span>':''));
+  msg(results.length+' Treffer gesamt'+(bad.length?' <span class="err">· '+esc(bad.join(' | '))+'</span>':''));
   renderRes();loadRecent()}catch(err){msg(err.message,1)}};
 
 const isFav=x=>favs.some(f=>f.nzbUrl&&f.nzbUrl===x.nzbUrl);
@@ -434,10 +438,12 @@ function rowHtml(x,i,kind){const fav=kind==='fav'||isFav(x);return `<div><div cl
  <button data-play="${i}" data-kind="${kind}">▶ Play</button>
  ${kind==='fav'?`<button class="danger" data-unfav="${i}">Entfernen</button>`:`<button class="star" data-fav="${i}" title="Favorit">${fav?'★':'☆'}</button>`}</div>
  <div class="files" id="fi-${kind}${i}"></div></div>`}
-function renderRes(){$('#list').innerHTML=results.map((x,i)=>rowHtml(x,i,'res')).join('');bind()}
+function renderRes(){const m=$('#flt').value;shown=results.filter(x=>keep(x.title||'',m));
+ const hid=results.length-shown.length;$('#list').innerHTML=(hid?`<div class="meta" style="padding:6px 10px">${hid} von ${results.length} Treffern ausgeblendet (Filter: ${$('#flt').selectedOptions[0].text})</div>`:'')+shown.map((x,i)=>rowHtml(x,i,'res')).join('');bind()}
+$('#flt').value=localStorage.getItem('flt')||'video';$('#flt').onchange=()=>{localStorage.setItem('flt',$('#flt').value);renderRes()};
 function renderFavs(){$('#favs').innerHTML=favs.length?favs.map((x,i)=>rowHtml(x,i,'fav')).join(''):'<p style="color:var(--mut)">Noch keine Favoriten.</p>';bind()}
-function bind(){$$('[data-play]').forEach(b=>b.onclick=()=>{listKind=b.dataset.kind;list=listKind==='fav'?favs:results;play(+b.dataset.play)});
- $$('[data-fav]').forEach(b=>b.onclick=()=>favorite(results[+b.dataset.fav],null,b));
+function bind(){$$('[data-play]').forEach(b=>b.onclick=()=>{listKind=b.dataset.kind;list=listKind==='fav'?favs:shown;play(+b.dataset.play)});
+ $$('[data-fav]').forEach(b=>b.onclick=()=>favorite(shown[+b.dataset.fav],null,b));
  $$('[data-unfav]').forEach(b=>b.onclick=async()=>{if(!confirm('Favorit entfernen?'))return;await api('api/favorites?id='+favs[+b.dataset.unfav].id,{method:'DELETE'});loadFavs()})}
 async function loadFavs(){try{favs=await api('api/favorites');renderFavs()}catch(e){msg(e.message,1)}}
 
