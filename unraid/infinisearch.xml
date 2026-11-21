@@ -1,0 +1,31 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>InfiniSearch</Name>
+  <Repository>ghcr.io/cosmicflow2512/infinisearch:latest</Repository>
+  <Registry>https://github.com/cosmicflow2512/InfiniSearch/pkgs/container/infinisearch</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/cosmicflow2512/InfiniSearch/issues</Support>
+  <Project>https://github.com/cosmicflow2512/InfiniSearch</Project>
+  <Overview>Freie Indexer-Suche fuer InfiniDysk 1.x: Suchbegriff eingeben, Play klicken - NZB wird automatisch eingereiht und im Browser abgespielt. Weiter/Zurueck, Favoriten (NZB lokal gespeichert), Suchverlauf und geladene NZBs loeschbar.</Overview>
+  <Category>MediaApp:Video Tools:</Category>
+  <WebUI>http://[IP]:[PORT:8090]/</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/cosmicflow2512/InfiniSearch/main/unraid/infinisearch.xml</TemplateURL>
+  <Icon/>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <Requires>InfiniDysk 1.x (ghcr.io/infinidysk/infinidysk) mit eingetragenen Indexern</Requires>
+  <Config Name="Web UI Port" Target="8090" Default="3010" Mode="tcp" Description="Container Port: 8090" Type="Port" Display="always" Required="true" Mask="false">3010</Config>
+  <Config Name="Data Path" Target="/data" Default="/mnt/user/appdata/infinisearch/data" Mode="rw" Description="Favoriten (NZB-Dateien), Suchverlauf, geladene NZBs" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/infinisearch/data</Config>
+  <Config Name="INFINIDYSK_URL" Target="INFINIDYSK_URL" Default="http://192.168.0.20:3008" Mode="" Description="Adresse der InfiniDysk-Instanz mit deinen Indexern" Type="Variable" Display="always" Required="true" Mask="false">http://192.168.0.20:3008</Config>
+  <Config Name="API_KEY" Target="API_KEY" Default="" Mode="" Description="FRONTEND_BACKEND_API_KEY genau dieser InfiniDysk-Instanz (signiert auch die Abspiel-Links)" Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="CATEGORY" Target="CATEGORY" Default="movies" Mode="" Description="SAB-Kategorie fuer eingereihte NZBs (muss in InfiniDysk existieren)" Type="Variable" Display="always" Required="true" Mask="false">movies</Config>
+  <Config Name="INFINIDYSK_PUBLIC_URL" Target="INFINIDYSK_PUBLIC_URL" Default="" Mode="" Description="Optional: Adresse, unter der der Player InfiniDysk erreicht (leer = INFINIDYSK_URL)" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="SEARCH_LIMIT" Target="SEARCH_LIMIT" Default="100" Mode="" Description="Max. Treffer pro Indexer (1-500)" Type="Variable" Display="advanced" Required="false" Mask="false">100</Config>
+  <Config Name="APP_USER" Target="APP_USER" Default="" Mode="" Description="Optional: Login-Benutzer" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="APP_PASSWORD" Target="APP_PASSWORD" Default="" Mode="" Description="Optional: Login-Passwort (leer = kein Login)" Type="Variable" Display="advanced" Required="false" Mask="true"></Config>
+  <Config Name="TZ" Target="TZ" Default="Europe/Berlin" Mode="" Description="Zeitzone" Type="Variable" Display="advanced" Required="false" Mask="false">Europe/Berlin</Config>
+</Container>
