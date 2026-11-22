@@ -247,7 +247,7 @@ def cleanup_loaded():
 
 # ---------------------------------------------------------------- HTTP
 class H(BaseHTTPRequestHandler):
-    server_version = "InfiniSearch/2.3"
+    server_version = "InfiniSearch/2.4"
 
     def log_message(self, fmt, *a):
         # keine Suchbegriffe/Pfade ins Log schreiben (Privatsphaere)
@@ -391,6 +391,10 @@ main{max-width:1100px;margin:auto;padding:12px}
 .ctl2 label{color:var(--mut);font-size:13px;display:flex;align-items:center;gap:6px;margin-right:auto}
 .ctl2 button{min-height:36px;padding:6px 10px;font-size:13px}
 #fav-btn{color:var(--fav)}
+#fab{position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));display:none;flex-direction:column;gap:10px;z-index:20}
+#fab.on{display:flex}#fab button{width:52px;height:52px;border-radius:50%;font-size:20px;padding:0;box-shadow:0 4px 14px rgba(0,0,0,.5)}
+#player.fs~#fab{display:none}
+#pt{cursor:pointer}
 .ctl3{padding:0 10px 8px;background:var(--card)}.ctl3 select{width:100%;min-height:40px}
 #refine{display:none;gap:8px;margin:0 0 8px}#refine input{flex:1;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:var(--card);color:#eee;font-size:16px}
 #player.fs .ctl3{background:rgba(22,22,26,.95)}
@@ -436,6 +440,7 @@ kbd{background:#2a2a31;border-radius:4px;padding:1px 5px;font-size:12px}
  <div class="ctl2"><label><input type="checkbox" id="auto"> Autoplay weiter</label>
   <button class="sec" id="copy">Link kopieren</button><a id="vlc"><button class="sec">In VLC</button></a><button class="sec" id="close">✕</button></div>
 </div>
+<div id="fab"><button id="fab-cur" class="sec" title="Zum laufenden Video in der Liste">📍</button><button id="fab-top" title="Nach oben zur Suche">🔍</button></div>
 <div id="msg"></div>
 <section id="tab-res"><div id="refine"><input id="rf" type="search" placeholder="Treffer verfeinern, z.B. 1080p german -cam" autocomplete="off" enterkeyhint="done"><button class="sec" id="rfx">✕</button></div><div id="list"></div></section>
 <section id="tab-fav" hidden><div id="favs"></div></section>
@@ -497,7 +502,7 @@ async function loadFavs(){try{const ci=listKind==='fav'?list[cur]:null;favs=awai
 function overlay(text,spin=true,tap=false){$('#ov').classList.toggle('on',!!text);v.controls=!text;$('#ovt').textContent=text||'';$('#spin').style.display=spin?'block':'none';$('#tap').style.display=tap?'inline-block':'none'}
 function title(t){$('#pt').textContent=(cur+1)+'/'+list.length+' · '+t}
 async function play(i){if(i<0||i>=list.length)return;const my=++run;cur=i;const x=list[i];
- $$('.row').forEach(r=>r.classList.remove('cur'));const row=$('#'+listKind+i);if(row){row.classList.add('cur');if(!$('#player').classList.contains('fs'))row.scrollIntoView({block:'nearest'})}
+ $$('.row').forEach(r=>r.classList.remove('cur'));const row=$('#'+listKind+i);if(row)row.classList.add('cur');
  const box=$('#fi-'+listKind+i);
  $('#player').style.display='block';v.pause();             // altes Bild bleibt stehen, Groesse bleibt gleich
  title(x.title);overlay('Wird eingereiht …');fillJump();updNav();setMeta(x.title);
@@ -523,12 +528,12 @@ v.addEventListener('error',()=>{if(showRun===run&&v.getAttribute('src'))overlay(
 v.addEventListener('ended',()=>{if($('#auto').checked)play(cur+1)});
 function fillJump(){const j=$('#jump');j.innerHTML=(cur<0?'<option value="-1">– aktuelles Video nicht in der Liste –</option>':'')+list.map((x,i)=>`<option value="${i}">${i+1}. ${esc(x.title)}${x.size?' ('+fmt(x.size)+')':''}</option>`).join('');j.value=String(cur)}
 $('#jump').onchange=e=>{const i=+e.target.value;if(i>=0)play(i)};
-function updNav(){$('#jump').value=String(cur);$('#prev').disabled=cur<=0;$('#next').disabled=cur>=list.length-1;const x=list[cur];
+function updNav(){updFab();$('#jump').value=String(cur);$('#prev').disabled=cur<=0;$('#next').disabled=cur>=list.length-1;const x=list[cur];
  $('#fav-btn').textContent=(listKind==='fav'||(x&&isFav(x)))?'★':'☆'}
 $('#next').onclick=()=>play(cur+1);$('#prev').onclick=()=>play(cur-1);
 $('#back').onclick=()=>{v.currentTime=Math.max(0,v.currentTime-10)};$('#fwd').onclick=()=>{v.currentTime+=30};
 $('#pp').onclick=()=>{v.paused?tryPlay():v.pause()};
-$('#close').onclick=()=>{run++;v.pause();v.removeAttribute('src');v.load();exitFs();$('#player').style.display='none';$$('.row').forEach(r=>r.classList.remove('cur'))};
+$('#close').onclick=()=>{run++;cur=-1;setTimeout(updFab);v.pause();v.removeAttribute('src');v.load();exitFs();$('#player').style.display='none';$$('.row').forEach(r=>r.classList.remove('cur'))};
 $('#fav-btn').onclick=()=>{if(listKind==='fav'||cur<0)return;favorite(list[cur],curNzo,null)};
 async function favorite(x,nzo,btn){if(!x||isFav(x))return;const el=btn||$('#fav-btn');el.disabled=true;el.textContent='…';
  try{await api('api/favorites',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({nzo:nzo||undefined,nzbUrl:x.nzbUrl,title:x.title,size:x.size,indexer:x.indexer})});
@@ -571,6 +576,12 @@ $('#delhist').onclick=async()=>{if(!confirm('Suchverlauf löschen?'))return;awai
 $('#delloaded').onclick=async()=>{if(!confirm('Alle geladenen NZBs aus InfiniDysk entfernen?'))return;try{const n=await delLoaded();alert(n+' entfernt')}catch(e){alert(e.message)}loadPriv()};
 $('#delall').onclick=async()=>{if(!confirm('Suchverlauf UND geladene NZBs löschen? Favoriten bleiben.'))return;
  try{await delHist();await delLoaded();results=[];renderRes();$('#q').value='';msg('Gelöscht.')}catch(e){alert(e.message)}loadPriv()};
+/* Nach oben / zum laufenden Video */
+function updFab(){const top=window.scrollY>400,c=cur>=0&&!!$('#'+listKind+cur);$('#fab-top').style.display=top?'block':'none';$('#fab-cur').style.display=c?'block':'none';$('#fab').classList.toggle('on',top||c)}
+window.addEventListener('scroll',updFab,{passive:true});
+$('#fab-top').onclick=()=>{window.scrollTo({top:0});$('#q').focus({preventScroll:true})};
+function toCur(){const r=$('#'+listKind+cur);if(r){if(listKind==='fav')tab('fav');const ph=P.classList.contains('fs')?0:P.getBoundingClientRect().height;window.scrollTo({top:r.getBoundingClientRect().top+window.scrollY-ph-10})}}
+$('#fab-cur').onclick=toCur;$('#pt').onclick=()=>{if(!P.classList.contains('fs'))toCur()};
 let rfT;$('#rf').oninput=()=>{clearTimeout(rfT);rfT=setTimeout(renderRes,150)};
 $('#rf').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#rf').blur()}};
 $('#rfx').onclick=()=>{$('#rf').value='';renderRes()};
