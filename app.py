@@ -15,6 +15,9 @@ InfiniDysk-Endpunkte (Quellcode v1.7.1):
   GET  /view/<pfad>?downloadKey=HMAC-SHA256(FRONTEND_BACKEND_API_KEY, pfad)
 """
 import base64, hashlib, hmac, json, os, re, threading, time, uuid
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
+from email.utils import parsedate_to_datetime
 import urllib.parse, urllib.request, urllib.error
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 
@@ -49,6 +52,7 @@ def _load():
     s.setdefault("searches", [])   # [{q, ts}]
     s.setdefault("played", {})     # key -> {nzo, title, ts}
     s.setdefault("favorites", [])  # [{id, title, size, indexer, ts}]
+    s.setdefault("indexers", [])   # [{id, name, url, apikey, enabled, cats, caps_ts}]
     return s
 
 
@@ -245,9 +249,165 @@ def cleanup_loaded():
     return {"removed": len(ids), "errors": errors}
 
 
+# ---------------------------------------------------------------- Indexer direkt (Newznab)
+NZ_UA = "InfiniSearch/2.5"
+
+
+def _nz_api(url):
+    u = url.strip().rstrip("/")
+    if not re.match(r"^https?://", u, re.I):
+        u = "https://" + u
+    return u if u.lower().endswith("/api") else u + "/api"
+
+
+def _nz_get(ix, params, timeout=30):
+    q = dict(params, apikey=ix["apikey"])
+    r = urllib.request.Request(_nz_api(ix["url"]) + "?" + urllib.parse.urlencode(q), headers={"User-Agent": NZ_UA})
+    try:
+        with urllib.request.urlopen(r, timeout=timeout) as resp:
+            body = resp.read(20_000_000)
+    except urllib.error.HTTPError as e:
+        raise UpstreamError(f"{ix['name']}: HTTP {e.code}")
+    except urllib.error.URLError as e:
+        raise UpstreamError(f"{ix['name']}: nicht erreichbar ({e.reason})")
+    try:
+        root = ET.fromstring(body)
+    except ET.ParseError:
+        raise UpstreamError(f"{ix['name']}: keine gueltige XML-Antwort")
+    if root.tag == "error":
+        raise UpstreamError(f"{ix['name']}: {root.get('description') or root.get('code')}")
+    return root
+
+
+def nz_caps(ix):
+    root = _nz_get(ix, {"t": "caps"})
+    cats = []
+    for c in root.iter("category"):
+        cats.append({"id": c.get("id"), "name": c.get("name"), "parent": None})
+        for sc in c.findall("subcat"):
+            cats.append({"id": sc.get("id"), "name": sc.get("name"), "parent": c.get("id")})
+    return cats
+
+
+def _attr(item, name):
+    for el in item:
+        if el.tag.endswith("}attr") or el.tag == "attr":
+            if el.get("name") == name:
+                return el.get("value")
+    return None
+
+
+def nz_search(ix, q, cat):
+    params = {"t": "search", "limit": str(LIMIT), "extended": "1"}
+    if q:
+        params["q"] = q
+    if cat:
+        params["cat"] = cat
+    root = _nz_get(ix, params)
+    out = []
+    for it in root.iter("item"):
+        enc = it.find("enclosure")
+        link = (enc.get("url") if enc is not None else None) or (it.findtext("link") or "").strip()
+        if not link:
+            continue
+        size = _attr(it, "size") or (enc.get("length") if enc is not None else None) or 0
+        posted = None
+        pd = it.findtext("pubDate")
+        if pd:
+            try:
+                posted = parsedate_to_datetime(pd).isoformat()
+            except (TypeError, ValueError):
+                pass
+        cats = [el.get("value") for el in it if (el.tag.endswith("}attr") or el.tag == "attr") and el.get("name") == "category"]
+        out.append({"indexer": ix["name"], "title": (it.findtext("title") or "").strip(), "nzbUrl": link,
+                    "size": int(size or 0), "posted": posted, "category": cats})
+    return out
+
+
+def ix_public(ix):
+    k = ix.get("apikey") or ""
+    return {"id": ix["id"], "name": ix["name"], "url": ix["url"], "enabled": ix.get("enabled", True),
+            "apikey": ("••••" + k[-4:]) if k else "", "cats": len(ix.get("cats") or [])}
+
+
+def ix_add(body):
+    ix = {"id": uuid.uuid4().hex[:10], "name": (body.get("name") or "").strip() or "Indexer",
+          "url": (body.get("url") or "").strip(), "apikey": (body.get("apikey") or "").strip(), "enabled": True}
+    if not ix["url"] or not ix["apikey"]:
+        raise UpstreamError("URL und API-Key sind noetig")
+    ix["cats"] = nz_caps(ix)          # testet gleichzeitig URL + Key
+    ix["caps_ts"] = int(time.time())
+    with _lock:
+        STATE["indexers"].append(ix)
+        save()
+    return ix_public(ix)
+
+
+def ix_categories():
+    """Kategorien aller aktiven Indexer zusammengefuehrt (Newznab-IDs sind weitgehend standardisiert)."""
+    with _lock:
+        ixs = [dict(i) for i in STATE["indexers"] if i.get("enabled", True)]
+    for ix in ixs:
+        if time.time() - ix.get("caps_ts", 0) > 86400:
+            try:
+                cats = nz_caps(ix)
+                with _lock:
+                    for orig in STATE["indexers"]:
+                        if orig["id"] == ix["id"]:
+                            orig["cats"], orig["caps_ts"] = cats, int(time.time())
+                    save()
+                ix["cats"] = cats
+            except UpstreamError:
+                pass
+    merged = {}
+    for ix in ixs:
+        for c in ix.get("cats") or []:
+            merged.setdefault(c["id"], c)
+    def key(c):
+        try:
+            return int(c["parent"] or c["id"]), 0 if not c["parent"] else int(c["id"])
+        except (TypeError, ValueError):
+            return 10 ** 9, 0
+    for c in merged.values():
+        c["parentName"] = merged.get(c["parent"], {}).get("name") if c["parent"] else None
+    return sorted(merged.values(), key=key)
+
+
+def direct_search(q, cat):
+    with _lock:
+        ixs = [dict(i) for i in STATE["indexers"] if i.get("enabled", True)]
+    if not ixs:
+        raise UpstreamError("Keine Indexer eingetragen (Reiter ⚙ Indexer)")
+    names = {c["id"]: c["name"] for c in ix_categories()}
+    results, status_ = [], []
+
+    def one(ix):
+        t0 = time.time()
+        try:
+            r = nz_search(ix, q, cat)
+            return r, {"name": ix["name"], "ok": True, "resultCount": len(r), "elapsedMs": int((time.time() - t0) * 1000)}
+        except UpstreamError as e:
+            return [], {"name": ix["name"], "ok": False, "error": str(e)}
+
+    with ThreadPoolExecutor(max_workers=min(8, len(ixs))) as ex:
+        for r, st in ex.map(one, ixs):
+            results += r
+            status_.append(st)
+    seen, uniq = set(), []
+    for r in results:
+        k = (r["title"].lower(), r["size"])
+        if k in seen:
+            continue
+        seen.add(k)
+        r["categoryName"] = ", ".join(names.get(c, c) for c in r.pop("category") if c)
+        uniq.append(r)
+    uniq.sort(key=lambda r: r["posted"] or "", reverse=True)
+    return {"results": uniq, "indexers": status_}
+
+
 # ---------------------------------------------------------------- HTTP
 class H(BaseHTTPRequestHandler):
-    server_version = "InfiniSearch/2.4"
+    server_version = "InfiniSearch/2.5"
 
     def log_message(self, fmt, *a):
         # keine Suchbegriffe/Pfade ins Log schreiben (Privatsphaere)
@@ -301,13 +461,18 @@ class H(BaseHTTPRequestHandler):
                 self.wfile.write(b)
             elif route == ("GET", "/api/search"):
                 q = qs.get("q", "").strip()
-                if not q:
+                src = qs.get("src", "dysk")
+                cat = re.sub(r"[^0-9,]", "", qs.get("cat", ""))
+                if not q and not (src == "direct" and cat):
                     return self._json({"error": "Suchbegriff fehlt"}, 400)
                 with _lock:
-                    STATE["searches"] = [s for s in STATE["searches"] if s["q"] != q]
-                    STATE["searches"].insert(0, {"q": q, "ts": int(time.time())})
+                    STATE["searches"] = [s for s in STATE["searches"] if s["q"] != q] if q else STATE["searches"]
+                    if q:
+                        STATE["searches"].insert(0, {"q": q, "ts": int(time.time())})
                     del STATE["searches"][200:]
                     save()
+                if src == "direct":
+                    return self._json(direct_search(q, cat))
                 self._json(_req("GET", "/api/search-indexers", params={"q": q, "limit": LIMIT}))
             elif route == ("GET", "/api/searches"):
                 with _lock:
@@ -334,6 +499,26 @@ class H(BaseHTTPRequestHandler):
             elif route == ("DELETE", "/api/favorites"):
                 delete_fav(qs.get("id", ""))
                 self._json({"ok": True})
+            elif route == ("GET", "/api/indexers"):
+                with _lock:
+                    self._json([ix_public(i) for i in STATE["indexers"]])
+            elif route == ("POST", "/api/indexers"):
+                self._json(ix_add(self._body()))
+            elif route == ("DELETE", "/api/indexers"):
+                with _lock:
+                    STATE["indexers"] = [i for i in STATE["indexers"] if i["id"] != qs.get("id")]
+                    save()
+                self._json({"ok": True})
+            elif route == ("POST", "/api/indexers/toggle"):
+                b = self._body()
+                with _lock:
+                    for i in STATE["indexers"]:
+                        if i["id"] == b.get("id"):
+                            i["enabled"] = bool(b.get("enabled"))
+                    save()
+                self._json({"ok": True})
+            elif route == ("GET", "/api/categories"):
+                self._json(ix_categories())
             elif route == ("GET", "/api/loaded"):
                 with _lock:
                     self._json({"count": len({p["nzo"] for p in STATE["played"].values()})})
@@ -391,6 +576,9 @@ main{max-width:1100px;margin:auto;padding:12px}
 .ctl2 label{color:var(--mut);font-size:13px;display:flex;align-items:center;gap:6px;margin-right:auto}
 .ctl2 button{min-height:36px;padding:6px 10px;font-size:13px}
 #fav-btn{color:var(--fav)}
+#srcrow{display:none;gap:8px;margin-top:8px}#srcrow select{flex:1;min-width:0}#srcrow select#src{flex:none}
+.ixform{display:flex;flex-wrap:wrap;gap:8px}.ixform input{flex:1 1 180px;min-width:0;padding:10px;border-radius:10px;border:1px solid var(--line);background:#0f0f12;color:#eee;font-size:16px}
+.ixrow{display:flex;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.ixrow .t{flex:1;min-width:0;word-break:break-all}
 #fab{position:fixed;right:14px;bottom:calc(16px + env(safe-area-inset-bottom));display:none;flex-direction:column;gap:10px;z-index:20}
 #fab.on{display:flex}#fab button{width:52px;height:52px;border-radius:50%;font-size:20px;padding:0;box-shadow:0 4px 14px rgba(0,0,0,.5)}
 #player.fs~#fab{display:none}
@@ -424,8 +612,9 @@ kbd{background:#2a2a31;border-radius:4px;padding:1px 5px;font-size:12px}
 </style></head><body>
 <header><div class="wrap">
 <form id="f"><input id="q" type="search" enterkeyhint="search" placeholder="Indexer durchsuchen …" autocomplete="off" list="recent"><datalist id="recent"></datalist><button>Suchen</button></form>
+<div id="srcrow"><select id="src" title="Quelle"><option value="direct">Indexer direkt</option><option value="dysk">über InfiniDysk</option></select><select id="cat" title="Kategorie"><option value="">Alle Kategorien</option></select></div>
 <nav><select id="flt" title="Filter"><option value="video">🎬 Nur Videos</option><option value="nobook">Ohne Bücher/Audio</option><option value="all">Alles</option></select>
-<button data-tab="res" class="on">Ergebnisse</button><button data-tab="fav">★<span class="hide-m"> Favoriten</span></button><button data-tab="priv">Verlauf</button></nav>
+<button data-tab="res" class="on">Ergebnisse</button><button data-tab="fav">★<span class="hide-m"> Favoriten</span></button><button data-tab="priv">Verlauf</button><button data-tab="ix">⚙<span class="hide-m"> Indexer</span></button></nav>
 </div></header>
 <main>
 <div id="player">
@@ -444,6 +633,13 @@ kbd{background:#2a2a31;border-radius:4px;padding:1px 5px;font-size:12px}
 <div id="msg"></div>
 <section id="tab-res"><div id="refine"><input id="rf" type="search" placeholder="Treffer verfeinern, z.B. 1080p german -cam" autocomplete="off" enterkeyhint="done"><button class="sec" id="rfx">✕</button></div><div id="list"></div></section>
 <section id="tab-fav" hidden><div id="favs"></div></section>
+<section id="tab-ix" hidden>
+ <div class="box"><b>Indexer direkt</b><p>Hier eingetragene Newznab-Indexer werden von InfiniSearch direkt durchsucht – mit Kategorien. Abspielen läuft weiter über InfiniDysk. Hinweis: Diese Suchen zählt InfiniDysk nicht für seine Indexer-Limits mit.</p>
+  <div id="ixlist"></div></div>
+ <div class="box"><b>Indexer hinzufügen</b><p>URL wie in InfiniDysk/Prowlarr, z. B. <code>https://api.nzbgeek.info</code> (ohne /api ist ok).</p>
+  <div class="ixform"><input id="ixn" placeholder="Name"><input id="ixu" placeholder="https://indexer.example"><input id="ixk" placeholder="API-Key" type="password" autocomplete="off">
+  <button id="ixadd">Testen &amp; speichern</button></div><div id="ixmsg" class="meta"></div></div>
+</section>
 <section id="tab-priv" hidden>
  <div class="box"><b>Suchverlauf</b><p>Letzte Suchen (nur in InfiniSearch gespeichert).</p><div class="hist" id="hist"></div><br>
   <button class="danger" id="delhist">Suchverlauf löschen</button></div>
@@ -468,21 +664,21 @@ let results=[],shown=[],favs=[],list=[],listKind='res',cur=-1,curUrl='',curNzo=n
 const v=$('#v');
 const msg=(h,e)=>$('#msg').innerHTML=e?'<span class="err">'+esc(h)+'</span>':h;
 
-function tab(t){$$('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));['res','fav','priv'].forEach(x=>$('#tab-'+x).hidden=x!==t);
- if(t==='fav')loadFavs();if(t==='priv')loadPriv()}
+function tab(t){$$('nav button').forEach(b=>b.classList.toggle('on',b.dataset.tab===t));['res','fav','priv','ix'].forEach(x=>$('#tab-'+x).hidden=x!==t);
+ if(t==='fav')loadFavs();if(t==='priv')loadPriv();if(t==='ix')loadIx()}
 $$('nav button').forEach(b=>b.onclick=()=>tab(b.dataset.tab));
 
 async function loadRecent(){try{const s=await api('api/searches');$('#recent').innerHTML=s.slice(0,20).map(x=>`<option value="${esc(x.q)}">`).join('');return s}catch(e){return[]}}
-$('#f').onsubmit=async e=>{e.preventDefault();const q=$('#q').value.trim();if(!q)return;$('#q').blur();tab('res');
+$('#f').onsubmit=async e=>{e.preventDefault();const q=$('#q').value.trim();const src=$('#srcrow').style.display==='flex'?$('#src').value:'dysk';const cat=src==='direct'?$('#cat').value:'';if(!q&&!cat)return;$('#q').blur();tab('res');
  msg('Suche läuft …');$('#list').innerHTML='';$('#rf').value='';
- try{const d=await api('api/search?q='+encodeURIComponent(q));results=d.results||[];
+ try{const d=await api('api/search?'+new URLSearchParams({q,src,cat}));results=d.results||[];
   const bad=(d.indexers||[]).filter(i=>!i.ok).map(i=>i.name+': '+i.error);
   msg(results.length+' Treffer gesamt'+(bad.length?' <span class="err">· '+esc(bad.join(' | '))+'</span>':''));
   renderRes();loadRecent()}catch(err){msg(err.message,1)}};
 
 const isFav=x=>favs.some(f=>f.nzbUrl&&f.nzbUrl===x.nzbUrl);
 function rowHtml(x,i,kind){const fav=kind==='fav'||isFav(x);return `<div><div class="row${kind===listKind&&i===cur?' cur':''}" id="${kind}${i}"><div class="t">${esc(x.title)}
- <div class="meta">${fmt(x.size)} · ${esc(x.indexer||'')} · ${x.posted?new Date(x.posted).toLocaleDateString('de-DE'):x.ts?'gespeichert '+new Date(x.ts*1000).toLocaleDateString('de-DE'):''}</div></div>
+ <div class="meta">${fmt(x.size)} · ${esc(x.indexer||'')}${x.categoryName?' · '+esc(x.categoryName):''} · ${x.posted?new Date(x.posted).toLocaleDateString('de-DE'):x.ts?'gespeichert '+new Date(x.ts*1000).toLocaleDateString('de-DE'):''}</div></div>
  <div class="acts"><button data-play="${i}" data-kind="${kind}">▶ Play</button>
  ${kind==='fav'?`<button class="danger" data-unfav="${i}">Entfernen</button>`:`<button class="star" data-fav="${i}" title="Favorit">${fav?'★':'☆'}</button>`}</div></div>
  <div class="files" id="fi-${kind}${i}"></div></div>`}
@@ -582,6 +778,23 @@ window.addEventListener('scroll',updFab,{passive:true});
 $('#fab-top').onclick=()=>{window.scrollTo({top:0});$('#q').focus({preventScroll:true})};
 function toCur(){const r=$('#'+listKind+cur);if(r){if(listKind==='fav')tab('fav');const ph=P.classList.contains('fs')?0:P.getBoundingClientRect().height;window.scrollTo({top:r.getBoundingClientRect().top+window.scrollY-ph-10})}}
 $('#fab-cur').onclick=toCur;$('#pt').onclick=()=>{if(!P.classList.contains('fs'))toCur()};
+/* Indexer direkt + Kategorien */
+async function loadCats(){try{const ix=await api('api/indexers');const on=ix.some(i=>i.enabled);$('#srcrow').style.display=on?'flex':'none';
+ if(!on)return;const cs=await api('api/categories');const sel=$('#cat'),keepv=localStorage.getItem('cat')||'';
+ sel.innerHTML='<option value="">Alle Kategorien</option>'+cs.map(c=>`<option value="${esc(c.id)}">${c.parent?'\u00a0\u00a0'+esc(c.parentName||'')+' › ':''}${esc(c.name)} (${esc(c.id)})</option>`).join('');
+ sel.value=keepv;if(sel.value!==keepv)sel.value='';$('#src').value=localStorage.getItem('src')||'direct';updSrc()}catch(e){}}
+function updSrc(){$('#cat').style.display=$('#src').value==='direct'?'':'none';$('#q').placeholder=$('#src').value==='direct'?'Suchen … (leer + Kategorie = Neueste)':'Indexer durchsuchen …'}
+$('#src').onchange=()=>{localStorage.setItem('src',$('#src').value);updSrc()};
+$('#cat').onchange=()=>{localStorage.setItem('cat',$('#cat').value);if(results.length||$('#q').value.trim())$('#f').requestSubmit()};
+async function loadIx(){try{const ix=await api('api/indexers');$('#ixlist').innerHTML=ix.length?ix.map(i=>`<div class="ixrow"><div class="t"><b>${esc(i.name)}</b><div class="meta">${esc(i.url)} · Key ${esc(i.apikey)} · ${i.cats} Kategorien</div></div>
+ <label class="meta"><input type="checkbox" data-ixon="${i.id}" ${i.enabled?'checked':''}> aktiv</label><button class="danger" data-ixdel="${i.id}">✕</button></div>`).join(''):'<span class="meta">Noch keine Indexer eingetragen.</span>';
+ $$('[data-ixdel]').forEach(b=>b.onclick=async()=>{if(!confirm('Indexer entfernen?'))return;await api('api/indexers?id='+b.dataset.ixdel,{method:'DELETE'});loadIx();loadCats()});
+ $$('[data-ixon]').forEach(c=>c.onchange=async()=>{await api('api/indexers/toggle',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:c.dataset.ixon,enabled:c.checked})});loadCats()})}catch(e){$('#ixlist').innerHTML='<span class="err">'+esc(e.message)+'</span>'}}
+$('#ixadd').onclick=async()=>{const b=$('#ixadd');b.disabled=true;$('#ixmsg').textContent='Teste Verbindung …';
+ try{const r=await api('api/indexers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:$('#ixn').value,url:$('#ixu').value,apikey:$('#ixk').value})});
+  $('#ixmsg').textContent='✓ '+r.name+' gespeichert ('+r.cats+' Kategorien)';$('#ixn').value=$('#ixu').value=$('#ixk').value='';loadIx();loadCats()}
+ catch(e){$('#ixmsg').innerHTML='<span class="err">'+esc(e.message)+'</span>'}finally{b.disabled=false}};
+loadCats();
 let rfT;$('#rf').oninput=()=>{clearTimeout(rfT);rfT=setTimeout(renderRes,150)};
 $('#rf').onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();$('#rf').blur()}};
 $('#rfx').onclick=()=>{$('#rf').value='';renderRes()};

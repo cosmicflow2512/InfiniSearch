@@ -6,6 +6,7 @@ Freie Indexer-Suche für [InfiniDysk](https://github.com/infinidysk/infinidysk) 
 - **▶ Play**: NZB wird automatisch eingereiht und im Browser abgespielt
 - **Weiter / Zurück**, Spulen, Autoplay, Tastatur (`N` `P` `F` `←` `→` `Leertaste`)
 - **★ Favoriten**: NZB-Datei wird lokal gespeichert und kann jederzeit neu abgespielt werden
+- **Indexer direkt mit Kategorien** (optional): Newznab-Indexer im Reiter ⚙ eintragen → Kategorien-Auswahl (Movies › HD, TV, …) und Suche direkt beim Indexer
 - **Privatsphäre**: Suchverlauf und alle von InfiniSearch geladenen NZBs (inkl. Mount) löschen – Favoriten bleiben
 
 ## Voraussetzungen
@@ -30,3 +31,8 @@ Template: `unraid/infinisearch.xml` nach `/boot/config/plugins/dockerMan/templat
 
 ## Verwendete InfiniDysk-Endpunkte (v1.7.1)
 `/api/search-indexers`, `/api/download-nzb`, `/api/list-webdav-directory`, SABnzbd-API (`addurl`, `addfile`, `queue`, `history`, `delete`), signierte `/view`-Links (HMAC-SHA256 mit `FRONTEND_BACKEND_API_KEY`).
+
+## Indexer direkt (optional)
+Im Reiter **⚙ Indexer** Newznab-Indexer mit URL und API-Key eintragen. InfiniSearch holt per `t=caps` die Kategorien und sucht per `t=search&cat=…` direkt beim Indexer. Abspielen läuft weiter über InfiniDysk (`addurl`).
+InfiniDysk selbst sendet bei der freien Suche keine Kategorie mit (`/api/search-indexers`) und gibt Indexer-Keys über `/api/get-config` nur maskiert heraus – daher die eigene Indexer-Liste.
+Hinweis: Diese Suchen zählt InfiniDysk nicht für seine Indexer-Limits mit. Die API-Keys liegen in `/data/state.json`.
